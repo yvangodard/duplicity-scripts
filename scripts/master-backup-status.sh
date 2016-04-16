@@ -1,5 +1,11 @@
 #! /bin/bash
 
+# Une batterie de scripts pour utiliser Duplicity
+# avec le support de contrôles Nagios / Centreon
+# godardyvan@gmail.com - http://www.yvangodard.me 
+# Plus d'infos : https://goo.gl/MXPkee
+# Licence MIT - https://goo.gl/yiCVlX
+
 # Charger la configuration par défaut si elle existe
 [ -e /etc/master-backup.conf ] && . /etc/master-backup.conf
 

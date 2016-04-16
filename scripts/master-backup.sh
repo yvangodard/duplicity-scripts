@@ -3,9 +3,8 @@
 # Une batterie de scripts pour utiliser Duplicity
 # avec le support de contrôles Nagios / Centreon
 # godardyvan@gmail.com - http://www.yvangodard.me 
-# Plus d'infos : 
-# Licence : 
-
+# Plus d'infos : https://goo.gl/MXPkee
+# Licence MIT - https://goo.gl/yiCVlX
 
 # Variables initialisation
 version="duplicityScripts v0.1 - 2016, Yvan Godard [godardyvan@gmail.com]"
@@ -120,7 +119,7 @@ export PASSPHRASE FTP_PASSWORD
 
 # Ajout d'un fichier de test pour Nagios
 DATE_FOR_NAGIOS=$(date +%F)
-SEARCHFILE=test-${DATE_FOR_NAGIOS}
+SEARCHFILE=test-${TAG}-${DATE_FOR_NAGIOS}
 touch "${DUPLICITY_DIR_TESTFILES%/}/${SEARCHFILE}"
 WHAT="${WHAT} --include ${DUPLICITY_DIR_TESTFILES}"
 
@@ -181,6 +180,10 @@ fi
 if (( REPORT_STATUS )); then
 	duplicity collection-status ${CACHE_OPTS} ${DUPLICITY_OPTS} ${URL%/}/ >> ${STDOUT_FILE}
 fi
+
+# Suppression des fichiers tests et cache de plus d'un mois 
+find ${DUPLICITY_DIR_TESTFILES%/} -name "test-${TAG}-*" -mtime +31 -print -exec rm {} \; >> ${STDOUT_FILE}
+find ${LOG_DIR} -name ".master-backup-listing-${TAG}*" -mtime +31 -print -exec rm {} \; >> ${STDOUT_FILE}
 
 # Le journal de sauvegarde est stocké dans ${LOG_DIR%/}/master-backup-duplicity-${H}-${TIMESTAMP}.log
 # mais peut être aussi envoyé par email à l'issue de la sauvegarde ou simplement

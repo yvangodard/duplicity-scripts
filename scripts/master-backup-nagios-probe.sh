@@ -13,21 +13,23 @@ scriptName=$(basename "${0}")
 scriptNameWithoutExt=$(echo "${scriptName}" | cut -f1 -d '.')
 messageContent=$(mktemp /tmp/${scriptNameWithoutExt}_messageContent.XXXXX)
 H=$(hostname)
-warning=0
-critical=0
+warningTest=0
+criticalTest=0
 warningVerifyScript=0
 thisTime=0
 totalSec=0
-statusDone=0
+totalTimeProbe=0
 defaultConfigFile="/etc/master-backup.conf"
 bufferFolder="/var/${scriptNameWithoutExt}"
 bufferFile="${bufferFolder%/}/bufferFile.txt"
-processingOutput="removeTemp"
 tempScript=$(mktemp /tmp/${scriptNameWithoutExt}_tempScript.XXXXX)
 tempFinalResult=$(mktemp /tmp/${scriptNameWithoutExt}_tempFinalResult.XXXXX)
 tempOutputResult=$(mktemp /tmp/${scriptNameWithoutExt}_tempOutputResult.XXXXX)
 tempPreviousContent=$(mktemp /tmp/${scriptNameWithoutExt}_tempPreviousContent.XXXXX)
-totalTimeProbe=0
+tempWarningTest=$(mktemp /tmp/${scriptNameWithoutExt}_tempWarningTest.XXXXX)
+tempWarningVerifyScript=$(mktemp /tmp/${scriptNameWithoutExt}_tempWarningVerifyScript.XXXXX)
+tempCriticalTest=$(mktemp /tmp/${scriptNameWithoutExt}_tempCriticalTest.XXXXX)
+tempProcessingOutput=$(mktemp /tmp/${scriptNameWithoutExt}_tempProcessingOutput.XXXXX)
 
 # Charger la configuration par défaut si elle existe
 [ -e ${defaultConfigFile} ] && . ${defaultConfigFile} && configFile=${defaultConfigFile}
@@ -81,7 +83,11 @@ function endThisScript () {
 		[[ -e ${tempPreviousContent} ]] && rm -R ${tempPreviousContent}
 		[[ -e ${lockFile} ]] && rm -R ${lockFile}
 	fi
-	[[ -e /tmp/${scriptNameWithoutExt}_${SEARCHFILE}.testrestore ]] && rm /tmp/${scriptNameWithoutExt}_${SEARCHFILE}.testrestore
+	find /tmp -name "${scriptNameWithoutExt}*" -name "*.testrestore" -exec rm -rf {} \; 
+	[[ -e ${tempWarningTest} ]] && rm ${tempWarningTest}
+	[[ -e ${tempWarningVerifyScript} ]] && rm ${tempWarningVerifyScript}
+	[[ -e ${tempCriticalTest} ]] && rm ${tempCriticalTest}
+	[[ -e ${tempProcessingOutput} ]] && rm ${tempProcessingOutput}
 	exit ${1}
 }
 
@@ -131,7 +137,7 @@ touch ${lockFile}
 	if [[ -e ${BASE%/}/.${TAG}_DONE ]]; then
 		echo "La dernière sauvegarde a été complètement terminée." >> ${messageContent}
 	else
-		warning=1
+		let warningTest=(warningTest+1)
 		echo "La dernière sauvegarde n'a pas été terminée," >> ${messageContent}
 		echo "le fichier '${BASE%/}/.${TAG}_DONE' n'a pas été trouvé." >> ${messageContent}
 	fi
@@ -144,13 +150,13 @@ touch ${lockFile}
 	if [[ -e ${BASE%/}/.${TAG}_OK ]]; then
 		echo "La dernière sauvegarde a été exécutée avec succès." >> ${messageContent}
 	else
-		warning=1
+		let warningTest=(warningTest+1)
 		echo "La dernière sauvegarde n'a pas été réussie," >> ${messageContent}
 		echo "le fichier '${BASE%/}/.${TAG}_OK' n'a pas été trouvé." >> ${messageContent}
 	fi
 
 	if [[ ${NAGIOS_PROBE_WITH_RESTORE_TEST} == "YES" ]] || [[ ${NAGIOS_PROBE_WITH_RESTORE_TEST} == "Yes" ]] || [[ ${NAGIOS_PROBE_WITH_RESTORE_TEST} == "yes" ]] || [[ ${NAGIOS_PROBE_WITH_RESTORE_TEST} == "Y" ]] || [[ ${NAGIOS_PROBE_WITH_RESTORE_TEST} == "y" ]] ; then
-		if [[ ${warning} -ne 1 ]]; then
+		if [[ ${warningTest} -eq 0 ]]; then
 			# Test si restauration fichier test OK
 			{
 				if [[ -e ${scriptDir%/}/master-backup-restore.sh ]]; then
@@ -167,7 +173,7 @@ touch ${lockFile}
 						echo "" >> ${messageContent}
 						echo "La restauration du fichier de test semble fonctionner. OK." >> ${messageContent}
 					else
-						warning=1
+						let warningTest=(warningTest+1)
 						echo "" >> ${messageContent}
 						echo "La restauration du fichier de test semble HS !" >> ${messageContent}
 
@@ -184,14 +190,14 @@ touch ${lockFile}
 							echo "" >> ${messageContent}
 							echo "La restauration du fichier de test semble fonctionner. OK." >> ${messageContent}
 						else
-							critical=1
+							let criticalTest=${criticalTest}+1
 							echo "" >> ${messageContent}
 							echo "La restauration du fichier de test semble HS !" >> ${messageContent}
 						fi
 						[[ -e /tmp/${scriptNameWithoutExt}_${SEARCHFILE}.testrestore ]] && rm /tmp/${scriptNameWithoutExt}_${SEARCHFILE}.testrestore
 					fi
 				else
-					critical=1
+					let criticalTest=${criticalTest}+1
 					echo "Le script de restauration '${scriptDir%/}/master-backup-restore.sh' est absent." >> ${messageContent}
 					endThisScript 2 ${processingOutput} "CRITICAL - ${scriptName} ${TAG} - Le script de restauration '${scriptDir%/}/master-backup-restore.sh' est absent."
 				fi
@@ -255,8 +261,6 @@ touch ${lockFile}
 						cat ${bufferFile} | sed 's/'"${previousLineBufferFile}"'/'"${newLineBufferFile}"'/g' >> ${bufferFile}.new \
 						&& mv ${bufferFile} ${bufferFile}.old && mv ${bufferFile}.new ${bufferFile} && rm ${bufferFile}.old
 						cat ${tempOutputResult} >> ${messageContent}
-						statusDone=1
-						processingOutput="removeTemp"
 					fi
 					sleep 1
 					let thisTime=${thisTime}+1
@@ -265,33 +269,32 @@ touch ${lockFile}
 			# Reading previous values
 			previousDate=$(echo ${previousLineBufferFile} | cut -d ';' -f 3)
 			previousDateExplicit=$(date -d @${previousDate})
-			if [[ ${statusDone} -ne 1 ]]; then
-				echo "*** $(date) ***" >> ${messageContent}
-				echo "Le script de contrôle n'a pas terminé son exécution dans un délai raisonnable." >> ${messageContent}
-				echo "Donc, nous affichons les précédentes valeurs enregistées en cache en date du ${previousDateExplicit}." >> ${messageContent}
-				echo "" >> ${messageContent}
-				echo "${previousLineBufferFile}" | cut -d ';' -f 2 | base64 --decode | perl -p -e 's/%%%%%%/\n/g' >> ${messageContent}
-			
-				# Creating temp script
-				echo "#!/bin/bash" > ${tempScript}
-				echo "bash -c '${scriptDir%/}/master-backup-status.sh --conf ${configFile} > ${tempOutputResult}'" >> ${tempScript}
-				echo "cat ${tempOutputResult} | perl -p -e 's/\n/%%%%%%/g' | base64 | perl -p -e 's/\n//g' > ${tempOutputResult}.encoded" >> ${tempScript}
-				echo 'newLineBufferFile="'${hashedConfigFile}';$(cat '${tempOutputResult}'.encoded);$(date +%s)"' >> ${tempScript}
-				echo "cat "${bufferFile}" | sed 's/"${previousLineBufferFile}"/'\"\${newLineBufferFile}\"'/g' >> "${bufferFile}".new && mv "${bufferFile}" "${bufferFile}".old && mv "${bufferFile}".new "${bufferFile}" && rm "${bufferFile}".old" >> ${tempScript}
-				echo "[[ -e "${tempOutputResult}" ]] && rm -R "${tempOutputResult} >> ${tempScript}
-				echo "[[ -e "${tempOutputResult}.encoded" ]] && rm -R "${tempOutputResult}.encoded >> ${tempScript}
-				echo "[[ -e "${tempFinalResult}" ]] && rm -R "${tempFinalResult} >> ${tempScript}
-				echo "[[ -e "${tempPreviousContent}" ]] && rm -R "${tempPreviousContent} >> ${tempScript}
-				echo "rm ${tempScript}" >> ${tempScript}
-				echo "rm ${lockFile}" >> ${tempScript}
-				echo "exit 0" >> ${tempScript}
-				echo ""
-				# Chmod script to be executed
-				chmod +x ${tempScript}
-				# Run this script in background
-				(/bin/bash ${tempScript} > /dev/null 2>&1 &)
-				processingOutput="dontRemoveTemp"
-			fi
+			echo "*** $(date) ***" >> ${messageContent}
+			echo "Le script de contrôle n'a pas terminé son exécution dans un délai raisonnable." >> ${messageContent}
+			echo "Donc, nous affichons les précédentes valeurs enregistées en cache en date du ${previousDateExplicit}." >> ${messageContent}
+			echo "" >> ${messageContent}
+			echo "${previousLineBufferFile}" | cut -d ';' -f 2 | base64 --decode | perl -p -e 's/%%%%%%/\n/g' >> ${messageContent}
+		
+			# Creating temp script
+			echo "#!/bin/bash" > ${tempScript}
+			echo "[[ -e "${tempOutputResult}" ]] && rm -R "${tempOutputResult} >> ${tempScript}
+			echo "[[ -e "${tempOutputResult}.encoded" ]] && rm -R "${tempOutputResult}.encoded >> ${tempScript}
+			echo "${scriptDir%/}/master-backup-status.sh --conf ${configFile} > ${tempOutputResult}" >> ${tempScript}
+			echo 'cat '${tempOutputResult}' | perl -p -e "s/\\n/%%%%%%/g" | base64 | perl -p -e "s/\\n//g" > '${tempOutputResult}.encoded >> ${tempScript}
+			echo 'newLineBufferFile="'${hashedConfigFile}';$(cat '${tempOutputResult}'.encoded);$(date +%s)"' >> ${tempScript}
+			echo "cat "${bufferFile}" | sed 's/"${previousLineBufferFile}"/'\"\${newLineBufferFile}\"'/g' >> "${bufferFile}".new && mv "${bufferFile}" "${bufferFile}".old && mv "${bufferFile}".new "${bufferFile}" && rm "${bufferFile}".old" >> ${tempScript}
+			echo "[[ -e "${tempOutputResult}" ]] && rm -R "${tempOutputResult} >> ${tempScript}
+			echo "[[ -e "${tempOutputResult}.encoded" ]] && rm -R "${tempOutputResult}.encoded >> ${tempScript}
+			echo "[[ -e "${tempFinalResult}" ]] && rm -R "${tempFinalResult} >> ${tempScript}
+			echo "[[ -e "${tempPreviousContent}" ]] && rm -R "${tempPreviousContent} >> ${tempScript}
+			echo "rm ${tempScript}" >> ${tempScript}
+			echo "rm ${lockFile}" >> ${tempScript}
+			echo "exit 0" >> ${tempScript}
+			# Chmod script to be executed
+			chmod +x ${tempScript}
+			# Run this script in background
+			(/bin/bash ${tempScript} > /dev/null 2>&1 &)
+			echo "dontRemoveTemp" > ${tempProcessingOutput}
 		else
 			# First time running test for this folder > writing outpout to Buffer file
 			echo "$(date)" >> ${messageContent}
@@ -303,12 +306,19 @@ touch ${lockFile}
 			newLineBufferFile="${hashedConfigFile};$(cat ${tempOutputResult} | perl -p -e 's/\n/%%%%%%/g' | base64 | perl -p -e 's/\n//g');$(date +%s)"
 			echo ${newLineBufferFile} >> ${bufferFile}
 			cat ${tempOutputResult} >> ${messageContent}
+			echo "removeTemp" > ${tempProcessingOutput}
 		fi
 	else
-		warningVerifyScript=1
-		processingOutput="removeTemp"
+		let warningVerifyScript=${warningVerifyScript}+1
+		echo "removeTemp" > ${tempProcessingOutput}
 		echo "'${scriptDir%/}/master-backup-status.sh' est absent !" >> ${messageContent}
 	fi
+		
+	# On renvoie le résultat vers des fichiers temporaires
+	echo "${warningTest}" > ${tempWarningTest}
+	echo "${warningVerifyScript}" > ${tempWarningVerifyScript}
+	echo "${criticalTest}" > ${tempCriticalTest}
+
 } 2>&1 | \
 {
 	# Boucle de chronométrage de la totalité du processus
@@ -317,26 +327,29 @@ touch ${lockFile}
 	do
 		echo ${totalline}
 	done
-	echo
 	let totalStopTime=$(date +%s)
 	let totalTimeMin=(totalStopTime-totalStartTime)/60 totalTimeSec=(totalStopTime-totalStartTime)%60
 	echo "" >> ${messageContent}
 	echo "************************************************************************************" >> ${messageContent}
 	echo "" >> ${messageContent}
-	echo "Durée totale d'éxécution de la sonde : ${totalTimeMin} minutes et ${totalTimeSec} secondes" >> ${messageContent}
+	echo "Durée totale d'éxécution de la sonde : ${totalTimeMin} minute"$([[ ${totalTimeMin} -gt 1 ]] && echo 's')" et ${totalTimeSec} seconde"$([[ ${totalTimeSec} -gt 1 ]] && echo 's') >> ${messageContent}
 	echo "" >> ${messageContent}
 	echo "************************************************************************************" >> ${messageContent}
 }
 
-
-if [[ ${critical} == "1" ]]; then
-	endThisScript 2 ${processingOutput} "CRITICAL - ${scriptName} ${TAG} sur ${H} - Pas de backup depuis ${NAGIOS_CRIT_DAYS} jours !"
-elif [[ ${warning} == "1" ]]; then
-    endThisScript 1 ${processingOutput} "WARNING - ${scriptName} ${TAG} sur ${H} - Pas de backup depuis ${NAGIOS_WARN_DAYS} jours !"
-elif [[ ${warningVerifyScript} == "1" ]]; then
-    endThisScript 1 ${processingOutput} "WARNING - ${scriptName} ${TAG} sur ${H} - master-backup-status.sh est absent !"
+processingOutput=$(cat ${tempProcessingOutput})
+if [[ $(cat ${tempCriticalTest}) -ge 1 ]]; then
+	endThisScript 2 ${processingOutput} "CRITICAL - ${scriptName} (${TAG} sur ${H}) - Pas de backup depuis ${NAGIOS_CRIT_DAYS} jour"$([[ ${NAGIOS_CRIT_DAYS} -gt 1 ]] && echo 's')" !"
+elif [[ $(cat ${tempWarningTest}) -ge 1 ]]; then
+	if [[ ${NAGIOS_PROBE_WITH_RESTORE_TEST} == "YES" ]] || [[ ${NAGIOS_PROBE_WITH_RESTORE_TEST} == "Yes" ]] || [[ ${NAGIOS_PROBE_WITH_RESTORE_TEST} == "yes" ]] || [[ ${NAGIOS_PROBE_WITH_RESTORE_TEST} == "Y" ]] || [[ ${NAGIOS_PROBE_WITH_RESTORE_TEST} == "y" ]] ; then
+		endThisScript 1 ${processingOutput} "WARNING - ${scriptName} (${TAG} sur ${H}) - Pas de backup depuis ${NAGIOS_WARN_DAYS} jour"$([[ ${NAGIOS_WARN_DAYS} -gt 1 ]] && echo 's')" !"
+	else
+		endThisScript 1 ${processingOutput} "WARNING - ${scriptName} (${TAG} sur ${H})"
+	fi
+elif [[ $(cat ${tempWarningVerifyScript}) -ge 1 ]]; then
+    endThisScript 1 ${processingOutput} "WARNING - ${scriptName} (${TAG} sur ${H}) - master-backup-status.sh est absent !"
 else
-    endThisScript 0 ${processingOutput} "OK - ${scriptName} ${TAG} sur ${H}"
+    endThisScript 0 ${processingOutput} "OK - ${scriptName} (${TAG} sur ${H})"
 fi
 
 endThisScript 0

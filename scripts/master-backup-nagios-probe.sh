@@ -208,7 +208,7 @@ touch ${lockFile}
 				let totalSec=(stopTime-startTime)
 				echo "Durée totale du processus de restauration : ${totalSec} secondes" >> ${messageContent}
 				let MAX_DELAY_PROBE=(MAX_DELAY_PROBE-totalSec)
-			} > /dev/null 2>&1
+			}
 		fi
 	fi
 
@@ -326,14 +326,14 @@ touch ${lockFile}
 	echo "Durée totale d'éxécution de la sonde : ${totalTimeMin} minutes et ${totalTimeSec} secondes" >> ${messageContent}
 	echo "" >> ${messageContent}
 	echo "************************************************************************************" >> ${messageContent}
-} > /dev/null 2>&1
+}
 
 
-if [[ ${critical} -ne 0 ]]; then
+if [[ ${critical} == "1" ]]; then
 	endThisScript 2 ${processingOutput} "CRITICAL - ${scriptName} ${TAG} sur ${H} - Pas de backup depuis ${NAGIOS_CRIT_DAYS} jours !"
-elif [[ ${warning} -ne 0 ]]; then
+elif [[ ${warning} == "1" ]]; then
     endThisScript 1 ${processingOutput} "WARNING - ${scriptName} ${TAG} sur ${H} - Pas de backup depuis ${NAGIOS_WARN_DAYS} jours !"
-elif [[ ${warningVerifyScript} -ne 0 ]]; then
+elif [[ ${warningVerifyScript} == "1" ]]; then
     endThisScript 1 ${processingOutput} "WARNING - ${scriptName} ${TAG} sur ${H} - master-backup-status.sh est absent !"
 else
     endThisScript 0 ${processingOutput} "OK - ${scriptName} ${TAG} sur ${H}"
